@@ -1,0 +1,79 @@
+name: OpenWrt RAW client
+
+on:
+  workflow_dispatch:
+  push:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: x86_64
+            goarch: amd64
+          - name: aarch64
+            goarch: arm64
+          - name: armv7
+            goarch: arm
+            goarm: "7"
+          - name: mipsel
+            goarch: mipsle
+            gomips: softfloat
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+          cache-dependency-path: client/go.sum
+
+      - name: Build static client
+        working-directory: client
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          GOMIPS: ${{ matrix.gomips }}
+        run: go build -tags=openwrt -trimpath -ldflags="-s -w" -o ../qwdtt-client .
+
+      - name: Pack archive
+        run: tar -czf "qwdtt-openwrt-${{ matrix.name }}.tar.gz" qwdtt-client install.sh files README.md LICENSE
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: qwdtt-openwrt-${{ matrix.name }}
+          path: qwdtt-openwrt-${{ matrix.name }}.tar.gz
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download archives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: qwdtt-openwrt-*
+          merge-multiple: true
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" ./*.tar.gz --title "qWDTT OpenWrt ${GITHUB_REF_NAME}" --generate-notes
