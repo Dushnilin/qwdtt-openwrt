@@ -76,4 +76,4 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" ./*.tar.gz --title "qWDTT OpenWrt ${GITHUB_REF_NAME}" --generate-notes
+        run: gh release create "${GITHUB_REF_NAME}" ./*.tar.gz --repo "$GITHUB_REPOSITORY" --title "qWDTT OpenWrt ${GITHUB_REF_NAME}" --generate-notes
