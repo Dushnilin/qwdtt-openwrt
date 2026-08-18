@@ -87,6 +87,10 @@ type WorkerSlot struct {
 }
 
 type Dispatcher struct {
+	tunReadCount    uint64
+	tunSentCount    uint64
+	tunDroppedCount uint64
+
 	localConn    net.PacketConn
 	tunFile      *os.File // не nil в -mode rawtun: сырые IP-пакеты вместо локального WG-loopback
 	ready        chan struct{}
@@ -113,9 +117,6 @@ type Dispatcher struct {
 	// отличить "трафик из TUN не читается вообще" от "читается, но дропается
 	// из-за перегруженных воркеров" — оба выглядят одинаково снаружи (сервер
 	// не видит пакетов от клиента), но чинятся по-разному.
-	tunReadCount    uint64
-	tunSentCount    uint64
-	tunDroppedCount uint64
 }
 
 func NewDispatcher(ctx context.Context, localConn net.PacketConn, stats *Stats) *Dispatcher {
