@@ -3,9 +3,14 @@ name: OpenWrt RAW client
 on:
   workflow_dispatch:
   push:
+    branches:
+      - main
+      - master
+    tags:
+      - "v*"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   build:
@@ -16,16 +21,52 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # x86
           - name: x86_64
             goarch: amd64
+          - name: i386
+            goarch: 386
+
+          # ARM 64-bit
           - name: aarch64
             goarch: arm64
+
+          # ARM 32-bit
           - name: armv7
             goarch: arm
             goarm: "7"
+          - name: armv6
+            goarch: arm
+            goarm: "6"
+          - name: armv5
+            goarch: arm
+            goarm: "5"
+
+          # MIPS Little-Endian (MediaTek MT7621, MT7628, MT7620, etc.)
           - name: mipsel
             goarch: mipsle
             gomips: softfloat
+          - name: mipsel_hardfloat
+            goarch: mipsle
+            gomips: hardfloat
+
+          # MIPS Big-Endian (Atheros ath79, AR7xxx, AR9xxx, Realtek, etc.)
+          - name: mips
+            goarch: mips
+            gomips: softfloat
+          - name: mips_hardfloat
+            goarch: mips
+            gomips: hardfloat
+
+          # MIPS64 (Cavium Octeon EdgeRouter, etc.)
+          - name: mips64
+            goarch: mips64
+          - name: mips64el
+            goarch: mips64le
+
+          # RISC-V 64-bit
+          - name: riscv64
+            goarch: riscv64
 
     steps:
       - name: Check out source
@@ -48,13 +89,17 @@ jobs:
         run: go build -tags=openwrt -trimpath -ldflags="-s -w" -o ../qwdtt-client .
 
       - name: Pack archive
-        run: tar -czf "qwdtt-openwrt-${{ matrix.name }}.tar.gz" qwdtt-client install.sh files README.md LICENSE
+        run: |
+          tar -czf "qwdtt-openwrt-${{ matrix.name }}.tar.gz" qwdtt-client install.sh files README.md LICENSE
+          sha256sum "qwdtt-openwrt-${{ matrix.name }}.tar.gz" > "qwdtt-openwrt-${{ matrix.name }}.tar.gz.sha256"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: qwdtt-openwrt-${{ matrix.name }}
-          path: qwdtt-openwrt-${{ matrix.name }}.tar.gz
+          path: |
+            qwdtt-openwrt-${{ matrix.name }}.tar.gz
+            qwdtt-openwrt-${{ matrix.name }}.tar.gz.sha256
           if-no-files-found: error
           retention-days: 90
 
@@ -73,7 +118,20 @@ jobs:
           pattern: qwdtt-openwrt-*
           merge-multiple: true
 
+      - name: Generate checksums
+        run: |
+          cat *.sha256 > sha256sums.txt
+          rm -f *.sha256
+          ls -la
+
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${GITHUB_REF_NAME}" ./*.tar.gz --repo "$GITHUB_REPOSITORY" --title "qWDTT OpenWrt ${GITHUB_REF_NAME}" --generate-notes
+        run: |
+          gh release create "${GITHUB_REF_NAME}" ./*.tar.gz sha256sums.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "qWDTT OpenWrt ${GITHUB_REF_NAME}" \
+            --generate-notes || \
+          gh release upload "${GITHUB_REF_NAME}" ./*.tar.gz sha256sums.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
