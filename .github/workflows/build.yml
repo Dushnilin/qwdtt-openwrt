@@ -168,10 +168,8 @@ jobs:
             cp -a "$HOST_LIB/." ~/.openwrt-tools/lib/ 2>/dev/null || true
             rm -f ~/.openwrt-tools/lib/libc.* ~/.openwrt-tools/lib/libm.* ~/.openwrt-tools/lib/libpthread.* ~/.openwrt-tools/lib/libdl.* ~/.openwrt-tools/lib/librt.* ~/.openwrt-tools/lib/ld-*
           fi
-          cat << 'EOF' > ~/.openwrt-tools/bin/apk
-#!/bin/sh
-LD_LIBRARY_PATH="/home/runner/.openwrt-tools/lib:${LD_LIBRARY_PATH:-}" exec /home/runner/.openwrt-tools/bin/apk.bin "$@"
-EOF
+          printf '#!/bin/sh\nLD_LIBRARY_PATH="/home/runner/.openwrt-tools/lib:${LD_LIBRARY_PATH:-}" exec /home/runner/.openwrt-tools/bin/apk.bin "$@"' > ~/.openwrt-tools/bin/apk
+          printf '\n' >> ~/.openwrt-tools/bin/apk
           chmod +x ~/.openwrt-tools/bin/apk ~/.openwrt-tools/bin/apk.bin ~/.openwrt-tools/bin/ipkg-build
           rm -f /tmp/openwrt-sdk.tar.zst
           echo "=== Testing apk ==="
