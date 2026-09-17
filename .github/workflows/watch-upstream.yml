@@ -1,0 +1,106 @@
+name: Watch Upstream
+
+on:
+  schedule:
+    - cron: '31 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force release even if no upstream changes detected'
+        type: boolean
+        default: false
+      tag:
+        description: 'Custom tag override (e.g. v1.0.2)'
+        required: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  sync:
+    name: Sync with upstream and trigger build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check upstream for updates
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          git remote add upstream https://github.com/SpaceNeuroX/qwdtt-openwrt.git 2>/dev/null || git remote set-url upstream https://github.com/SpaceNeuroX/qwdtt-openwrt.git
+          git fetch upstream main --tags
+
+          UPSTREAM_COMMITS=$(git rev-list HEAD..upstream/main --count)
+          echo "Upstream commits ahead: $UPSTREAM_COMMITS"
+
+          # Get latest upstream release tag if any
+          UPSTREAM_TAG=$(gh api repos/SpaceNeuroX/qwdtt-openwrt/releases/latest --jq '.tag_name' 2>/dev/null || echo "")
+          if [ -z "$UPSTREAM_TAG" ]; then
+            UPSTREAM_TAG=$(git tag -l "v*" --sort=-v:refname | head -n1 || echo "")
+          fi
+          echo "Latest upstream release tag: $UPSTREAM_TAG"
+
+          # Current latest local release tag in our repo
+          LOCAL_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+          echo "Current local tag: $LOCAL_TAG"
+
+          CHANGED="false"
+          TARGET_TAG="$LOCAL_TAG"
+
+          if [ -n "${{ inputs.tag }}" ]; then
+            TARGET_TAG="${{ inputs.tag }}"
+            CHANGED="true"
+          elif [ -n "$UPSTREAM_TAG" ] && [ "$UPSTREAM_TAG" != "$LOCAL_TAG" ]; then
+            TARGET_TAG="$UPSTREAM_TAG"
+            CHANGED="true"
+          fi
+
+          if [ "$UPSTREAM_COMMITS" -gt 0 ]; then
+            echo "Merging upstream main into main..."
+            git merge upstream/main -m "sync: merge upstream SpaceNeuroX/qwdtt-openwrt changes" || git merge --abort
+            CHANGED="true"
+          fi
+
+          if [ "${{ inputs.force_release }}" = "true" ]; then
+            CHANGED="true"
+          fi
+
+          echo "changed=$CHANGED" >> "$GITHUB_OUTPUT"
+          echo "tag=$TARGET_TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Push changes and tag if updated
+        if: steps.check.outputs.changed == 'true'
+        run: |
+          TAG="${{ steps.check.outputs.tag }}"
+
+          # Push commits to main
+          git push origin main
+
+          # Create tag if it doesn't already exist
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists locally."
+          else
+            git tag -a "$TAG" -m "Release $TAG"
+          fi
+          git push origin "$TAG" || true
+
+      - name: Trigger build workflow
+        if: steps.check.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.check.outputs.tag }}"
+          echo "Triggering build.yml workflow for tag $TAG..."
+          gh workflow run build.yml --ref main -f tag="$TAG" -f publish_release=true
