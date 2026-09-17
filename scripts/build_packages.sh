@@ -11,9 +11,10 @@ VER="${5:-1.0.3}"
 VER="${VER#v}"
 
 mkdir -p dist
+DIST_DIR="$(cd dist && pwd)"
 
 # 1. Raw tar.gz archive for manual installs / legacy scripts
-tar -czf "dist/qwdtt-openwrt-${NAME}.tar.gz" qwdtt-client install.sh files README.md LICENSE
+tar -czf "$DIST_DIR/qwdtt-openwrt-${NAME}.tar.gz" qwdtt-client install.sh files README.md LICENSE
 
 # 2. Prepare root filesystem tree for packages
 ROOT_DIR="$(mktemp -d /tmp/qwdtt-pkg-root-XXXXXX)"
@@ -86,11 +87,11 @@ Maintainer: Dushnilin
 Description: qWDTT client for OpenWrt
 EOF
   sudo chown -R 0:0 "$IPK_DIR"
-  sudo ipkg-build "$IPK_DIR" dist >/dev/null
+  sudo ipkg-build "$IPK_DIR" "$DIST_DIR" >/dev/null
   sudo rm -rf "$IPK_DIR"
-  if [ -f "dist/wdtt_${VER}-1_${arch}.ipk" ]; then
-    cp -p "dist/wdtt_${VER}-1_${arch}.ipk" "dist/wdtt_${VER}_${arch}.ipk"
-    cp -p "dist/wdtt_${VER}-1_${arch}.ipk" "dist/wdtt_${VER}_openwrt_${arch}.ipk"
+  if [ -f "$DIST_DIR/wdtt_${VER}-1_${arch}.ipk" ]; then
+    cp -p "$DIST_DIR/wdtt_${VER}-1_${arch}.ipk" "$DIST_DIR/wdtt_${VER}_${arch}.ipk"
+    cp -p "$DIST_DIR/wdtt_${VER}-1_${arch}.ipk" "$DIST_DIR/wdtt_${VER}_openwrt_${arch}.ipk"
   fi
 done
 
@@ -99,7 +100,7 @@ for arch in $APK_ARCHES; do
   sudo chown -R 0:0 "$ROOT_DIR" "$SCRIPTS_DIR"
   sudo apk.static mkpkg \
     --files "$ROOT_DIR" \
-    --output "dist/wdtt_${VER}-1_${arch}.apk" \
+    --output "$DIST_DIR/wdtt_${VER}-1_${arch}.apk" \
     -I "name:wdtt" \
     -I "version:${VER}-r1" \
     -I "description:qWDTT client for OpenWrt" \
@@ -112,14 +113,14 @@ for arch in $APK_ARCHES; do
     -I "provides:qwdtt" \
     -s "post-install:${SCRIPTS_DIR}/post-install.sh" \
     -s "pre-deinstall:${SCRIPTS_DIR}/pre-deinstall.sh"
-  cp -p "dist/wdtt_${VER}-1_${arch}.apk" "dist/wdtt_${VER}_${arch}.apk"
-  cp -p "dist/wdtt_${VER}-1_${arch}.apk" "dist/wdtt_${VER}_openwrt_${arch}.apk"
+  cp -p "$DIST_DIR/wdtt_${VER}-1_${arch}.apk" "$DIST_DIR/wdtt_${VER}_${arch}.apk"
+  cp -p "$DIST_DIR/wdtt_${VER}-1_${arch}.apk" "$DIST_DIR/wdtt_${VER}_openwrt_${arch}.apk"
 done
 
-sudo chown -R "$(id -u):$(id -g)" dist
-for f in dist/*; do
+sudo chown -R "$(id -u):$(id -g)" "$DIST_DIR"
+for f in "$DIST_DIR"/*; do
   [ -f "$f" ] || continue
   sha256sum "$f" > "${f}.sha256"
 done
 
-ls -lh dist/
+ls -lh "$DIST_DIR"/
