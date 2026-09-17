@@ -153,24 +153,27 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.openwrt-tools
-          key: openwrt-host-tools-25.12.3-v4
+          key: openwrt-host-tools-25.12.3-v5
 
       - name: Setup OpenWrt host tools
         if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/.openwrt-tools/bin ~/.openwrt-tools/lib
           curl -fsSL https://downloads.openwrt.org/releases/25.12.3/targets/x86/64/openwrt-sdk-25.12.3-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst -o /tmp/openwrt-sdk.tar.zst
-          tar --zstd -xf /tmp/openwrt-sdk.tar.zst --wildcards '*/staging_dir/host/bin/apk*' '*/staging_dir/host/lib/*' '*/scripts/ipkg-build'
-          find . -path '*/staging_dir/host/bin/apk*' -exec cp -p {} ~/.openwrt-tools/bin/ \;
+          tar --zstd -xf /tmp/openwrt-sdk.tar.zst --wildcards '*/staging_dir/host/bin/apk*' '*/staging_dir/host/bin/.apk*' '*/staging_dir/host/lib/*' '*/scripts/ipkg-build'
+          HOST_BIN="$(find . -path '*/staging_dir/host/bin' -type d | head -n 1)"
+          if [ -n "$HOST_BIN" ]; then
+            cp -a "$HOST_BIN/." ~/.openwrt-tools/bin/ 2>/dev/null || true
+          fi
           cp -p $(find . -path '*/scripts/ipkg-build' | head -n 1) ~/.openwrt-tools/bin/ipkg-build
           HOST_LIB="$(find . -path '*/staging_dir/host/lib' -type d | head -n 1)"
           if [ -n "$HOST_LIB" ]; then
             cp -a "$HOST_LIB/." ~/.openwrt-tools/lib/ 2>/dev/null || true
           fi
-          chmod +x ~/.openwrt-tools/bin/*
+          chmod +x ~/.openwrt-tools/bin/* ~/.openwrt-tools/bin/.* 2>/dev/null || true
           rm -f /tmp/openwrt-sdk.tar.zst
           echo "=== Testing apk ==="
-          ~/.openwrt-tools/bin/apk --version || ~/.openwrt-tools/bin/apk version || true
+          ~/.openwrt-tools/bin/apk --version
           echo "=== Testing ipkg-build ==="
           ~/.openwrt-tools/bin/ipkg-build -h || true
 
