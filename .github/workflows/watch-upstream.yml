@@ -42,19 +42,22 @@ jobs:
           git remote add upstream https://github.com/SpaceNeuroX/qwdtt-openwrt.git 2>/dev/null || git remote set-url upstream https://github.com/SpaceNeuroX/qwdtt-openwrt.git
           git fetch upstream main --tags
 
-          UPSTREAM_COMMITS=$(git rev-list HEAD..upstream/main --count)
+          UPSTREAM_COMMITS=$(git rev-list HEAD..upstream/main --count || echo "0")
           echo "Upstream commits ahead: $UPSTREAM_COMMITS"
 
-          # Get latest upstream release tag if any
-          UPSTREAM_TAG=$(gh api repos/SpaceNeuroX/qwdtt-openwrt/releases/latest --jq '.tag_name' 2>/dev/null || echo "")
+          # Get latest upstream release tag (including pre-releases)
+          UPSTREAM_TAG=$(gh api repos/SpaceNeuroX/qwdtt-openwrt/releases --jq '.[0].tag_name' 2>/dev/null || echo "")
           if [ -z "$UPSTREAM_TAG" ]; then
-            UPSTREAM_TAG=$(git tag -l "v*" --sort=-v:refname | head -n1 || echo "")
+            UPSTREAM_TAG=$(gh api repos/SpaceNeuroX/qwdtt-openwrt/tags --jq '.[0].name' 2>/dev/null || echo "")
           fi
           echo "Latest upstream release tag: $UPSTREAM_TAG"
 
-          # Current latest local release tag in our repo
-          LOCAL_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
-          echo "Current local tag: $LOCAL_TAG"
+          # Current latest GitHub release in our fork
+          LOCAL_TAG=$(gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[0].tag_name' 2>/dev/null || echo "")
+          if [ -z "$LOCAL_TAG" ]; then
+            LOCAL_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+          fi
+          echo "Current local release tag: $LOCAL_TAG"
 
           CHANGED="false"
           TARGET_TAG="$LOCAL_TAG"
@@ -62,9 +65,17 @@ jobs:
           if [ -n "${{ inputs.tag }}" ]; then
             TARGET_TAG="${{ inputs.tag }}"
             CHANGED="true"
-          elif [ -n "$UPSTREAM_TAG" ] && [ "$UPSTREAM_TAG" != "$LOCAL_TAG" ]; then
-            TARGET_TAG="$UPSTREAM_TAG"
-            CHANGED="true"
+          elif [ -n "$UPSTREAM_TAG" ]; then
+            CLEAN_UPSTREAM="${UPSTREAM_TAG#v}"
+            CLEAN_LOCAL="${LOCAL_TAG#v}"
+            NEWEST=$(printf '%s\n%s\n' "$CLEAN_LOCAL" "$CLEAN_UPSTREAM" | sort -V | tail -n1)
+            if [ "$NEWEST" = "$CLEAN_UPSTREAM" ] && [ "$CLEAN_UPSTREAM" != "$CLEAN_LOCAL" ]; then
+              echo "Upstream version $CLEAN_UPSTREAM is newer than local $CLEAN_LOCAL"
+              TARGET_TAG="v$CLEAN_UPSTREAM"
+              CHANGED="true"
+            else
+              echo "Local version $CLEAN_LOCAL is already up to date with upstream ($CLEAN_UPSTREAM)"
+            fi
           fi
 
           if [ "$UPSTREAM_COMMITS" -gt 0 ]; then
@@ -74,6 +85,7 @@ jobs:
           fi
 
           if [ "${{ inputs.force_release }}" = "true" ]; then
+            echo "Force release requested."
             CHANGED="true"
           fi
 
@@ -102,5 +114,5 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ steps.check.outputs.tag }}"
-          echo "Triggering build.yml workflow for tag $TAG..."
-          gh workflow run build.yml --ref main -f tag="$TAG" -f publish_release=true
+          echo "Triggering build.yml workflow in $GITHUB_REPOSITORY for tag $TAG..."
+          gh workflow run build.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag="$TAG" -f publish_release=true
