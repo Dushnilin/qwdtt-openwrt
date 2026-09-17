@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag override (e.g. v1.0.2)'
+        description: 'Release tag override (e.g. v1.0.3)'
         required: false
       publish_release:
         description: 'Publish release (default: true)'
@@ -26,6 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -39,15 +40,18 @@ jobs:
           elif [ -n "${{ inputs.tag }}" ]; then
             TAG="${{ inputs.tag }}"
           else
-            TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+            TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v1.0.3")
           fi
+          VER="${TAG#v}"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "qWDTT tag: $TAG"
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "qWDTT tag: $TAG, version: $VER"
 
   build:
     name: Build ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs: meta
     strategy:
       fail-fast: false
       matrix:
@@ -55,49 +59,81 @@ jobs:
           # x86
           - name: x86_64
             goarch: amd64
+            ipk_arches: "x86_64"
+            apk_arches: "x86_64"
+
           - name: i386
             goarch: 386
+            ipk_arches: "i386_pentium4 i386"
+            apk_arches: "x86 i386"
 
           # ARM 64-bit
           - name: aarch64
             goarch: arm64
+            ipk_arches: "aarch64_generic aarch64_cortex-a53 aarch64"
+            apk_arches: "aarch64 aarch64_generic aarch64_cortex-a53"
 
           # ARM 32-bit
           - name: armv7
             goarch: arm
             goarm: "7"
+            ipk_arches: "arm_cortex-a7_neon-vfpv4 arm_cortex-a9 arm_cortex-a15_neon-vfpv4 armv7"
+            apk_arches: "armv7"
+
           - name: armv6
             goarch: arm
             goarm: "6"
+            ipk_arches: "arm_arm1176jzf-s_vfp armv6"
+            apk_arches: "armhf armv6"
+
           - name: armv5
             goarch: arm
             goarm: "5"
+            ipk_arches: "arm_arm926ej-s armv5"
+            apk_arches: "armel armv5"
 
           # MIPS Little-Endian (MediaTek MT7621, MT7628, MT7620, etc.)
           - name: mipsel
             goarch: mipsle
             gomips: softfloat
+            ipk_arches: "mipsel_24kc mipsel"
+            apk_arches: "mipsel"
+
           - name: mipsel_hardfloat
             goarch: mipsle
             gomips: hardfloat
+            ipk_arches: "mipsel_24kf mipsel_hardfloat"
+            apk_arches: "mipselhf mipsel_hardfloat"
 
           # MIPS Big-Endian (Atheros ath79, AR7xxx, AR9xxx, Realtek, etc.)
           - name: mips
             goarch: mips
             gomips: softfloat
+            ipk_arches: "mips_24kc mips"
+            apk_arches: "mips"
+
           - name: mips_hardfloat
             goarch: mips
             gomips: hardfloat
+            ipk_arches: "mips_24kf mips_hardfloat"
+            apk_arches: "mipshf mips_hardfloat"
 
           # MIPS64 (Cavium Octeon EdgeRouter, etc.)
           - name: mips64
             goarch: mips64
+            ipk_arches: "mips64"
+            apk_arches: "mips64"
+
           - name: mips64el
             goarch: mips64le
+            ipk_arches: "mips64el"
+            apk_arches: "mips64el"
 
           # RISC-V 64-bit
           - name: riscv64
             goarch: riscv64
+            ipk_arches: "riscv64_generic riscv64"
+            apk_arches: "riscv64"
 
     steps:
       - name: Check out source
@@ -109,6 +145,13 @@ jobs:
           go-version: "1.26.x"
           cache-dependency-path: client/go.sum
 
+      - name: Install packaging tools
+        run: |
+          sudo curl -fsSL https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.0/x86_64/apk.static -o /usr/local/bin/apk.static
+          sudo chmod +x /usr/local/bin/apk.static
+          sudo curl -fsSL https://raw.githubusercontent.com/openwrt/openwrt/master/scripts/ipkg-build -o /usr/local/bin/ipkg-build
+          sudo chmod +x /usr/local/bin/ipkg-build
+
       - name: Build static client
         working-directory: client
         env:
@@ -119,18 +162,131 @@ jobs:
           GOMIPS: ${{ matrix.gomips }}
         run: go build -tags=openwrt -trimpath -ldflags="-s -w" -o ../qwdtt-client .
 
-      - name: Pack archive
+      - name: Pack packages
+        env:
+          TAG: ${{ needs.meta.outputs.tag }}
+          VER: ${{ needs.meta.outputs.version }}
+          NAME: ${{ matrix.name }}
+          IPK_ARCHES: ${{ matrix.ipk_arches }}
+          APK_ARCHES: ${{ matrix.apk_arches }}
         run: |
-          tar -czf "qwdtt-openwrt-${{ matrix.name }}.tar.gz" qwdtt-client install.sh files README.md LICENSE
-          sha256sum "qwdtt-openwrt-${{ matrix.name }}.tar.gz" > "qwdtt-openwrt-${{ matrix.name }}.tar.gz.sha256"
+          mkdir -p dist
+          # Raw archive for backwards compatibility
+          tar -czf "dist/qwdtt-openwrt-${NAME}.tar.gz" qwdtt-client install.sh files README.md LICENSE
+
+          # Root filesystem tree for packages
+          ROOT_DIR="$(mktemp -d /tmp/qwdtt-pkg-root-XXXXXX)"
+          SCRIPTS_DIR="$(mktemp -d /tmp/qwdtt-pkg-scripts-XXXXXX)"
+
+          mkdir -p "$ROOT_DIR/usr/bin" "$ROOT_DIR/etc/init.d" "$ROOT_DIR/etc/config" "$ROOT_DIR/etc/qwdtt" "$ROOT_DIR/etc/uci-defaults"
+
+          cp qwdtt-client "$ROOT_DIR/usr/bin/qwdtt-client"
+          ln -sf qwdtt-client "$ROOT_DIR/usr/bin/qwdtt"
+          ln -sf qwdtt-client "$ROOT_DIR/usr/bin/wdtt"
+          chmod 0755 "$ROOT_DIR/usr/bin/qwdtt-client"
+
+          cp files/etc/init.d/qwdtt "$ROOT_DIR/etc/init.d/qwdtt"
+          chmod 0755 "$ROOT_DIR/etc/init.d/qwdtt"
+
+          cp files/etc/config/qwdtt "$ROOT_DIR/etc/config/qwdtt"
+          chmod 0600 "$ROOT_DIR/etc/config/qwdtt"
+
+          cp files/etc/qwdtt/config.json "$ROOT_DIR/etc/qwdtt/config.json"
+          chmod 0600 "$ROOT_DIR/etc/qwdtt/config.json"
+
+          echo "$VER" > "$ROOT_DIR/etc/qwdtt/.version"
+          chmod 0644 "$ROOT_DIR/etc/qwdtt/.version"
+
+          cp files/etc/uci-defaults/99-qwdtt "$ROOT_DIR/etc/uci-defaults/99-qwdtt"
+          chmod 0755 "$ROOT_DIR/etc/uci-defaults/99-qwdtt"
+
+          # Control scripts
+          cat > "$SCRIPTS_DIR/post-install.sh" <<'EOF'
+#!/bin/sh
+[ -n "${IPKG_INSTROOT}" ] && exit 0
+if [ -f /etc/uci-defaults/99-qwdtt ]; then
+    sh /etc/uci-defaults/99-qwdtt
+fi
+/etc/init.d/qwdtt enable >/dev/null 2>&1 || true
+exit 0
+EOF
+          chmod 0755 "$SCRIPTS_DIR/post-install.sh"
+
+          cat > "$SCRIPTS_DIR/pre-deinstall.sh" <<'EOF'
+#!/bin/sh
+[ -n "${IPKG_INSTROOT}" ] && exit 0
+/etc/init.d/qwdtt stop >/dev/null 2>&1 || true
+/etc/init.d/qwdtt disable >/dev/null 2>&1 || true
+exit 0
+EOF
+          chmod 0755 "$SCRIPTS_DIR/pre-deinstall.sh"
+
+          # Build IPK packages
+          for arch in $IPK_ARCHES; do
+            IPK_DIR="$(mktemp -d /tmp/qwdtt-ipk-XXXXXX)"
+            cp -a "$ROOT_DIR/." "$IPK_DIR/"
+            mkdir -p "$IPK_DIR/CONTROL"
+            cp "$SCRIPTS_DIR/post-install.sh" "$IPK_DIR/CONTROL/postinst"
+            cp "$SCRIPTS_DIR/pre-deinstall.sh" "$IPK_DIR/CONTROL/prerm"
+            cat > "$IPK_DIR/CONTROL/conffiles" <<'EOF'
+/etc/config/qwdtt
+/etc/qwdtt/config.json
+EOF
+            cat > "$IPK_DIR/CONTROL/control" <<EOF
+Package: wdtt
+Version: ${VER}-1
+Depends: ca-bundle, kmod-tun, ip-full
+Provides: qwdtt
+Section: net
+Architecture: ${arch}
+Maintainer: Dushnilin
+Description: qWDTT client for OpenWrt
+EOF
+            sudo chown -R 0:0 "$IPK_DIR"
+            sudo ipkg-build "$IPK_DIR" dist >/dev/null
+            sudo rm -rf "$IPK_DIR"
+            if [ -f "dist/wdtt_${VER}-1_${arch}.ipk" ]; then
+              cp -p "dist/wdtt_${VER}-1_${arch}.ipk" "dist/wdtt_${VER}_${arch}.ipk"
+              cp -p "dist/wdtt_${VER}-1_${arch}.ipk" "dist/wdtt_${VER}_openwrt_${arch}.ipk"
+            fi
+          done
+
+          # Build APK packages
+          for arch in $APK_ARCHES; do
+            sudo chown -R 0:0 "$ROOT_DIR" "$SCRIPTS_DIR"
+            sudo apk.static mkpkg \
+              --files "$ROOT_DIR" \
+              --output "dist/wdtt_${VER}-1_${arch}.apk" \
+              -I "name:wdtt" \
+              -I "version:${VER}-r1" \
+              -I "description:qWDTT client for OpenWrt" \
+              -I "arch:${arch}" \
+              -I "license:GPL-3.0" \
+              -I "origin:wdtt" \
+              -I "maintainer:Dushnilin" \
+              -I "url:https://github.com/Dushnilin/qwdtt-openwrt" \
+              -I "depends:ca-bundle kmod-tun ip-full" \
+              -I "provides:qwdtt" \
+              -s "post-install:${SCRIPTS_DIR}/post-install.sh" \
+              -s "pre-deinstall:${SCRIPTS_DIR}/pre-deinstall.sh"
+            cp -p "dist/wdtt_${VER}-1_${arch}.apk" "dist/wdtt_${VER}_${arch}.apk"
+            cp -p "dist/wdtt_${VER}-1_${arch}.apk" "dist/wdtt_${VER}_openwrt_${arch}.apk"
+          done
+
+          sudo chown -R "$(id -u):$(id -g)" dist "$ROOT_DIR" "$SCRIPTS_DIR"
+          rm -rf "$ROOT_DIR" "$SCRIPTS_DIR"
+
+          for f in dist/*; do
+            [ -f "$f" ] || continue
+            sha256sum "$f" > "${f}.sha256"
+          done
+          ls -la dist/
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: qwdtt-openwrt-${{ matrix.name }}
-          path: |
-            qwdtt-openwrt-${{ matrix.name }}.tar.gz
-            qwdtt-openwrt-${{ matrix.name }}.tar.gz.sha256
+          path: dist/*
           if-no-files-found: error
           retention-days: 90
 
@@ -151,7 +307,7 @@ jobs:
 
       - name: Generate checksums
         run: |
-          cat *.sha256 > sha256sums.txt
+          cat *.sha256 | sort -u > sha256sums.txt
           rm -f *.sha256
           ls -la
 
@@ -160,10 +316,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${{ needs.meta.outputs.tag }}"
-          gh release create "${TAG}" ./*.tar.gz sha256sums.txt \
+          gh release create "${TAG}" ./* \
             --repo "$GITHUB_REPOSITORY" \
             --title "qWDTT OpenWrt ${TAG}" \
             --generate-notes || \
-          gh release upload "${TAG}" ./*.tar.gz sha256sums.txt \
+          gh release upload "${TAG}" ./* \
             --repo "$GITHUB_REPOSITORY" \
             --clobber

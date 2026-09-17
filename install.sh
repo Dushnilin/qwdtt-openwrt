@@ -131,6 +131,8 @@ mkdir -p /usr/bin /etc/init.d /etc/config /etc/qwdtt
 cp "$archive_dir/qwdtt-client" /usr/bin/qwdtt-client
 cp "$archive_dir/files/etc/init.d/qwdtt" /etc/init.d/qwdtt
 chmod 0755 /usr/bin/qwdtt-client /etc/init.d/qwdtt
+ln -sf /usr/bin/qwdtt-client /usr/bin/qwdtt
+ln -sf /usr/bin/qwdtt-client /usr/bin/wdtt
 
 if [ ! -e /etc/config/qwdtt ]; then
 	cp "$archive_dir/files/etc/config/qwdtt" /etc/config/qwdtt
