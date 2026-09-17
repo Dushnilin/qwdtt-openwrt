@@ -153,24 +153,21 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.openwrt-tools
-          key: openwrt-host-tools-25.12.3-v3
+          key: openwrt-host-tools-25.12.3-v4
 
       - name: Setup OpenWrt host tools
         if: steps.cache-tools.outputs.cache-hit != 'true'
         run: |
           mkdir -p ~/.openwrt-tools/bin ~/.openwrt-tools/lib
           curl -fsSL https://downloads.openwrt.org/releases/25.12.3/targets/x86/64/openwrt-sdk-25.12.3-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst -o /tmp/openwrt-sdk.tar.zst
-          tar --zstd -xf /tmp/openwrt-sdk.tar.zst --wildcards '*/staging_dir/host/bin/apk' '*/staging_dir/host/lib/*' '*/scripts/ipkg-build'
-          cp -p $(find . -path '*/staging_dir/host/bin/apk' | head -n 1) ~/.openwrt-tools/bin/apk.bin
+          tar --zstd -xf /tmp/openwrt-sdk.tar.zst --wildcards '*/staging_dir/host/bin/apk*' '*/staging_dir/host/lib/*' '*/scripts/ipkg-build'
+          find . -path '*/staging_dir/host/bin/apk*' -exec cp -p {} ~/.openwrt-tools/bin/ \;
           cp -p $(find . -path '*/scripts/ipkg-build' | head -n 1) ~/.openwrt-tools/bin/ipkg-build
           HOST_LIB="$(find . -path '*/staging_dir/host/lib' -type d | head -n 1)"
           if [ -n "$HOST_LIB" ]; then
             cp -a "$HOST_LIB/." ~/.openwrt-tools/lib/ 2>/dev/null || true
-            rm -f ~/.openwrt-tools/lib/libc.* ~/.openwrt-tools/lib/libm.* ~/.openwrt-tools/lib/libpthread.* ~/.openwrt-tools/lib/libdl.* ~/.openwrt-tools/lib/librt.* ~/.openwrt-tools/lib/ld-*
           fi
-          printf '#!/bin/sh\nLD_LIBRARY_PATH="/home/runner/.openwrt-tools/lib:${LD_LIBRARY_PATH:-}" exec /home/runner/.openwrt-tools/bin/apk.bin "$@"' > ~/.openwrt-tools/bin/apk
-          printf '\n' >> ~/.openwrt-tools/bin/apk
-          chmod +x ~/.openwrt-tools/bin/apk ~/.openwrt-tools/bin/apk.bin ~/.openwrt-tools/bin/ipkg-build
+          chmod +x ~/.openwrt-tools/bin/*
           rm -f /tmp/openwrt-sdk.tar.zst
           echo "=== Testing apk ==="
           ~/.openwrt-tools/bin/apk --version || ~/.openwrt-tools/bin/apk version || true
