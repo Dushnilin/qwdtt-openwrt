@@ -115,11 +115,6 @@ EOF
     sudo chown -R 0:0 "$IPK_DIR"
     sudo "$IPKG_BUILD_BIN" "$IPK_DIR" "$DIST_DIR" >/dev/null
     sudo rm -rf "$IPK_DIR"
-
-    if [ -f "$DIST_DIR/wdtt_${VER}-1_${arch}.ipk" ]; then
-      sudo cp -p "$DIST_DIR/wdtt_${VER}-1_${arch}.ipk" "$DIST_DIR/wdtt_${VER}_${arch}.ipk"
-      sudo cp -p "$DIST_DIR/wdtt_${VER}-1_${arch}.ipk" "$DIST_DIR/wdtt_${VER}_openwrt_${arch}.ipk"
-    fi
   done
 
   # APK packaging
@@ -140,8 +135,6 @@ EOF
       -I "provides:qwdtt" \
       -s "post-install:${SCRIPTS_DIR}/post-install.sh" \
       -s "pre-deinstall:${SCRIPTS_DIR}/pre-deinstall.sh"
-    sudo cp -p "$DIST_DIR/wdtt_${VER}-1_${arch}.apk" "$DIST_DIR/wdtt_${VER}_${arch}.apk"
-    sudo cp -p "$DIST_DIR/wdtt_${VER}-1_${arch}.apk" "$DIST_DIR/wdtt_${VER}_openwrt_${arch}.apk"
   done
 
   sudo rm -rf "$ROOT_DIR" "$SCRIPTS_DIR"
